@@ -3,12 +3,12 @@ import os
 from dotenv import load_dotenv
 import nest_asyncio
 import asyncio
-from main import NewsletterGenerator  # Updated to use the new NewsletterGenerator
+from main import NewsletterGenerator
 
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
 
-# Load environment variables
+# Load environment variables (local dev fallback)
 load_dotenv()
 
 # Set page config
@@ -21,21 +21,10 @@ st.set_page_config(
 # Custom CSS
 st.markdown("""
 <style>
-    .main {
-        padding: 2rem;
-    }
-    .stButton>button {
-        width: 100%;
-    }
-    .newsletter-content {
-        background-color: #f8f9fa;
-        padding: 2rem;
-        border-radius: 10px;
-        margin-top: 2rem;
-    }
-    .topic-input {
-        margin-bottom: 2rem;
-    }
+    .main { padding: 2rem; }
+    .stButton>button { width: 100%; }
+    .newsletter-content { background-color: #f8f9fa; padding: 2rem; border-radius: 10px; margin-top: 2rem; }
+    .topic-input { margin-bottom: 2rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -53,29 +42,9 @@ example_topics = [
     "Recap of Google I/O 2025",
 ]
 
-# Sidebar for API keys and settings
+# Sidebar for settings (no API keys)
 with st.sidebar:
-    st.header("🔑 API Keys")
-    nebius_api_key = st.text_input(
-        "Nebius API Key",
-        value=os.getenv("NEBIUS_API_KEY", ""),
-        type="password",
-        help="Your Nebius API key"
-    )
-    newsapi_api_key = st.text_input(
-        "NewsAPI API Key",
-        value=os.getenv("NEWSAPI_API_KEY", ""),
-        type="password",
-        help="Get your API key from https://newsapi.org/"
-    )
-    
-    # Update environment variables with user input
-    if nebius_api_key:
-        os.environ["NEBIUS_API_KEY"] = nebius_api_key
-    if newsapi_api_key:
-        os.environ["NEWSAPI_API_KEY"] = newsapi_api_key
-    
-    st.markdown("---")
+    st.header("⚙️ Settings")
     st.markdown("### 📚 Example Topics")
     for topic in example_topics:
         if st.button(topic, key=topic):
@@ -119,16 +88,16 @@ async def generate_newsletter_async(topic, search_limit, time_range):
         st.error("Please enter a topic or select one from the examples.")
         return None
     if not os.getenv("NEBIUS_API_KEY") or not os.getenv("NEWSAPI_API_KEY"):
-        st.error("Please provide both API keys in the sidebar.")
+        st.error("API keys are not configured. Please set them in Streamlit secrets.")
         return None
     
     with st.spinner("Generating your newsletter..."):
         try:
-            generator = NewsletterGenerator(topic=topic, search_limit=search_limit, time_range=time_range[1])
-            response = await generator.run()  # Assuming run() is async in NewsletterGenerator
-            return response
+            # Call NewsletterGenerator directly, no need for .run() here
+            response = NewsletterGenerator(topic=topic, search_limit=search_limit, time_range=time_range[1])
+            return response  # Return the RunResponse object
         except Exception as e:
-            st.error(f"An error occurred while generating the newsletter: {str(e)}")
+            st.error(f"An error occurred: {str(e)}")
             return None
 
 def generate_newsletter():
@@ -138,7 +107,7 @@ def generate_newsletter():
     if response:
         url_safe_topic = topic.lower().replace(" ", "-")
         st.markdown("### 📝 Generated Newsletter")
-        st.markdown(response.content)
+        st.markdown(response.content)  # Access content directly
         st.download_button(
             label="📥 Download Newsletter",
             data=response.content,
@@ -155,4 +124,4 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 if st.button("Generate Newsletter", type="primary"):
-    generate_newsletter()
+    generate_newsletter()   
