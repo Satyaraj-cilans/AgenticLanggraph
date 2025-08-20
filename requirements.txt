@@ -1,4 +1,8 @@
-streamlit
-python-dotenv
-agno
 asyncio
+streamlit
+agno
+newsapi-python
+python-dotenv
+nest-asyncio
+openai
+sqlalchemy
