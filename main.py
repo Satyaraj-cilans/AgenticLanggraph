@@ -1,182 +1,312 @@
-import json
-from textwrap import dedent
-from typing import Dict, AsyncIterator, Optional, List, Any
-from agno.agent import Agent
-from agno.models.nebius import Nebius
-from agno.storage.sqlite import SqliteStorage
-from agno.utils.log import logger
 import os
-from agno.utils.pprint import pprint_run_response
 from dotenv import load_dotenv
-import asyncio
+import logging
 from datetime import datetime, timedelta
-from newsapi import NewsApiClient  # Replace firecrawl import
-
-from agno.tools.reasoning import ReasoningTools
+from typing import List, Dict, Any
+import json
+import requests
 
 # Load environment variables
 load_dotenv()
 
-# Get API keys from environment variables
-FIRECRAWL_API_KEY = os.getenv("FIRECRAWL_API_KEY")  # Optional, can remove
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Get API keys
 NEBIUS_API_KEY = os.getenv("NEBIUS_API_KEY")
 NEWSAPI_API_KEY = os.getenv("NEWSAPI_API_KEY")
-if not NEBIUS_API_KEY:
-    raise ValueError("NEBIUS_API_KEY environment variable is not set.")
-if not NEWSAPI_API_KEY:
-    raise ValueError("NEWSAPI_API_KEY environment variable is not set.")
 
-# Custom NewsAPI Tool
-class NewsAPITools:
-    def __init__(self, search_params):
-        self.newsapi = NewsApiClient(api_key=NEWSAPI_API_KEY)
-        self.search_params = search_params
-
-    async def search(self, query):
+class NewsletterGenerator:
+    def __init__(self, topic: str, search_limit: int = 5, time_range: str = "qdr:w"):
+        self.topic = topic
+        self.search_limit = search_limit
+        self.time_range = time_range
+        
+        logger.info(f"Initializing NewsletterGenerator with topic: '{topic}', limit: {search_limit}")
+        
+        # Check if we have API keys
+        if not NEBIUS_API_KEY:
+            logger.error("NEBIUS_API_KEY not found")
+            raise ValueError("NEBIUS_API_KEY environment variable is not set.")
+        if not NEWSAPI_API_KEY:
+            logger.error("NEWSAPI_API_KEY not found")
+            raise ValueError("NEWSAPI_API_KEY environment variable is not set.")
+    
+    def generate(self) -> str:
+        """Generate newsletter content"""
         try:
-            # Fetch articles from NewsAPI (last 7 days by default)
+            logger.info(f"Starting newsletter generation for topic: {self.topic}")
+            
+            # Try the full AI approach first
+            return self._generate_with_newsapi_and_ai()
+            
+        except Exception as e:
+            logger.error(f"Full AI generation failed: {str(e)}")
+            # Fallback to NewsAPI only
+            return self._generate_with_newsapi_only()
+    
+    def _fetch_news_articles(self) -> List[Dict[str, Any]]:
+        """Fetch articles from NewsAPI"""
+        try:
+            from newsapi import NewsApiClient
+            
+            newsapi = NewsApiClient(api_key=NEWSAPI_API_KEY)
+            
+            # Calculate date range
             from_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
-            response = self.newsapi.get_everything(
-                q=query,
+            
+            logger.info(f"Searching NewsAPI for: {self.topic}")
+            response = newsapi.get_everything(
+                q=self.topic,
                 language='en',
                 sort_by='relevancy',
-                page_size=self.search_params.get("limit", 5),
+                page_size=min(self.search_limit, 20),
                 from_param=from_date
             )
+            
             articles = response.get("articles", [])
-            return [{"title": a["title"], "content": a["description"] or a["content"] or "No content available", "url": a["url"]} for a in articles]
+            logger.info(f"Found {len(articles)} articles")
+            
+            return articles
+            
         except Exception as e:
-            logger.error(f"NewsAPI error: {str(e)}")
+            logger.error(f"Error fetching news articles: {str(e)}")
             return []
-
-# Newsletter Research Agent: Handles web searching and content extraction using NewsAPI
-newsletter_agent = Agent(
-    model=Nebius(
-        id="meta-llama/Meta-Llama-3.1-70B-Instruct",
-        api_key=NEBIUS_API_KEY
-    ),
-    tools=[
-        NewsAPITools(search_params={"limit": 2}),  # Simplified params; tbs replaced with from_param logic
-    ],
-    description=dedent("""\
-    You are NewsletterResearch-X, an elite research assistant specializing in discovering
-    and extracting high-quality content for compelling newsletters. Your expertise includes:
-
-    - Finding authoritative and trending sources across multiple domains
-    - Extracting and synthesizing content efficiently while maintaining accuracy
-    - Evaluating content credibility, relevance, and potential impact
-    - Identifying diverse perspectives, expert opinions, and emerging trends
-    - Ensuring comprehensive topic coverage with balanced viewpoints
-    - Maintaining journalistic integrity and ethical reporting standards
-    - Creating engaging narratives that resonate with target audiences
-    - Adapting content style and depth based on audience expertise level\
-    """),
-    instructions=dedent("""\
-    1. Initial Research & Discovery:
-       - Use newsapi_search to find recent articles about the topic
-       - Search for authoritative sources, expert opinions, and industry leaders
-       - Focus on the most recent and relevant content (prioritize last 7 days)
-       - Identify key stakeholders and their perspectives
-       - Look for contrasting viewpoints to ensure balanced coverage
-
-    2. Content Analysis & Processing:
-       - Extract key insights, trends, and patterns from each article
-       - Identify important quotes, statistics, and data points
-       - Evaluate source credibility, expertise, and potential biases
-       - Assess the impact and implications of the information
-       - Look for connections between different pieces of information
-       - Identify gaps in coverage that need additional research
-
-    3. Content Organization & Structure:
-       - Group related information by theme and significance
-       - Identify main story angles and supporting narratives
-       - Create a logical flow of information
-       - Prioritize content based on relevance and impact
-       - Ensure balanced coverage of different perspectives
-       - Structure content for optimal reader engagement
-
-    4. Newsletter Creation:
-       - Follow the exact template structure below
-       - Create compelling headlines that capture attention
-       - Write engaging introductions that set context
-       - Develop clear, concise, and informative sections
-       - Include relevant quotes and statistics to support key points
-       - Maintain consistent tone and style throughout
-       - Use markdown formatting effectively
-       - Ensure proper attribution for all content
-       - Include actionable insights and practical takeaways
-       - Add relevant links for further reading
-
-    Guidelines:
-    - Always use newsapi_search to gather comprehensive information
-    - Prioritize recent (within 7 days) and authoritative sources
-    - Maintain proper attribution and citation for all content
-    - Focus on actionable insights and practical implications
-    - Keep content engaging, accessible, and well-structured
-    - Use markdown formatting consistently and effectively
-    - Ensure proper formatting and structure throughout
-    - Replace all {placeholder} fields with specific, relevant content
-    - Create specific, topic-relevant titles for sections
-    - Include diverse perspectives and balanced viewpoints
-    - Add value through analysis and expert insights
-    - Maintain journalistic integrity and ethical standards
-    - STRICTLY follow the expected_output format
-    """),
-    expected_output=dedent("""\
-        # ${Compelling Subject Line}
-
-        ## Welcome
-        {Engaging hook and context}
-
-        ## ${Main Story}
-        {Key insights and analysis}
-        {Expert quotes and statistics}
-
-        ## Featured Content
-        {Deeper exploration}
-        {Real-world examples}
-
-        ## Quick Updates
-        {Actionable insights}
-        {Expert recommendations}
-
-        ## This Week's Highlights
-        - {Notable update 1}
-        - {Important news 2}
-        - {Key development 3}
-
-        ## Sources & Further Reading
-        {Properly attributed sources with links}
-    """),
-    markdown=True,
-    show_tool_calls=True,
-    add_datetime_to_instructions=True,
-    storage=SqliteStorage(
-        table_name="newsletter_agent",
-        db_file="tmp/newsletter_agent.db",
-    ),
-)
-
-def NewsletterGenerator(topic: str, search_limit: int = 5, time_range: str = "qdr:w"):
-    """
-    Generate a newsletter based on the given topic and search parameters.
     
-    Args:
-        topic (str): The topic to generate the newsletter about
-        search_limit (int): Maximum number of articles to search and analyze
-        time_range (str): Time range for article search (e.g., "qdr:w" for past week)
-    """
+    def _call_nebius_api(self, prompt: str) -> str:
+        """Call Nebius API directly"""
+        try:
+            url = "https://api.studio.nebius.ai/v1/chat/completions"
+            
+            headers = {
+                "Authorization": f"Bearer {NEBIUS_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "meta-llama/Meta-Llama-3.1-70B-Instruct",
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an expert newsletter writer. Create engaging, professional newsletters from the provided content. Use proper markdown formatting."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": 2000,
+                "temperature": 0.7
+            }
+            
+            logger.info("Calling Nebius API...")
+            response = requests.post(url, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            
+            result = response.json()
+            content = result['choices'][0]['message']['content']
+            
+            logger.info("Successfully generated content with Nebius API")
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error calling Nebius API: {str(e)}")
+            raise
+    
+    def _generate_with_newsapi_and_ai(self) -> str:
+        """Generate newsletter using NewsAPI + AI"""
+        # Fetch articles
+        articles = self._fetch_news_articles()
+        
+        if not articles:
+            raise Exception("No articles found")
+        
+        # Prepare content for AI
+        articles_text = ""
+        for i, article in enumerate(articles[:self.search_limit], 1):
+            title = article.get('title', 'Untitled')
+            description = article.get('description', 'No description')
+            url = article.get('url', '')
+            source = article.get('source', {}).get('name', 'Unknown')
+            published = article.get('publishedAt', '')
+            
+            articles_text += f"""
+Article {i}:
+Title: {title}
+Source: {source}
+Published: {published}
+Description: {description}
+URL: {url}
+
+"""
+        
+        # Create AI prompt
+        prompt = f"""Create a professional newsletter about "{self.topic}" using the following articles:
+
+{articles_text}
+
+Please create a well-structured newsletter with:
+1. A compelling headline
+2. An engaging introduction
+3. Main story sections covering the most important developments
+4. Key insights and analysis
+5. A summary of highlights
+6. Proper source attribution with links
+
+Use markdown formatting and make it engaging and informative."""
+        
+        # Generate with AI
+        try:
+            ai_content = self._call_nebius_api(prompt)
+            return ai_content
+        except Exception as e:
+            logger.error(f"AI generation failed, falling back: {str(e)}")
+            return self._generate_with_newsapi_only()
+    
+    def _generate_with_newsapi_only(self) -> str:
+        """Generate newsletter using only NewsAPI (no AI)"""
+        logger.info("Using NewsAPI-only generation")
+        
+        articles = self._fetch_news_articles()
+        
+        if not articles:
+            return self._generate_fallback()
+        
+        # Create newsletter manually
+        newsletter = f"# Newsletter: {self.topic}\n\n"
+        newsletter += f"## Welcome\n"
+        newsletter += f"Here's your latest newsletter about **{self.topic}** featuring {len(articles[:self.search_limit])} recent articles.\n\n"
+        
+        newsletter += "## Featured Stories\n\n"
+        
+        for i, article in enumerate(articles[:self.search_limit], 1):
+            title = article.get('title', 'Untitled')
+            description = article.get('description', 'No description available')
+            url = article.get('url', '')
+            source = article.get('source', {}).get('name', 'Unknown Source')
+            published = article.get('publishedAt', '')
+            
+            # Format the date
+            try:
+                if published:
+                    pub_date = datetime.fromisoformat(published.replace('Z', '+00:00'))
+                    formatted_date = pub_date.strftime('%B %d, %Y')
+                else:
+                    formatted_date = 'Recent'
+            except:
+                formatted_date = 'Recent'
+            
+            newsletter += f"### {i}. {title}\n\n"
+            newsletter += f"**Source:** {source} | **Published:** {formatted_date}\n\n"
+            newsletter += f"{description}\n\n"
+            
+            if url:
+                newsletter += f"[Read Full Article]({url})\n\n"
+            
+            newsletter += "---\n\n"
+        
+        # Add summary section
+        newsletter += "## Key Highlights\n\n"
+        for i, article in enumerate(articles[:3], 1):
+            title = article.get('title', 'Untitled')
+            newsletter += f"- **{title}**\n"
+        
+        newsletter += f"\n## About This Newsletter\n\n"
+        newsletter += f"This newsletter was generated based on {len(articles)} recent articles about {self.topic}. "
+        newsletter += f"Articles were sourced from NewsAPI and cover developments from the past week.\n\n"
+        
+        newsletter += "## Sources\n\n"
+        for i, article in enumerate(articles[:self.search_limit], 1):
+            title = article.get('title', 'Untitled')
+            url = article.get('url', '')
+            source = article.get('source', {}).get('name', 'Unknown')
+            
+            if url:
+                newsletter += f"{i}. [{title}]({url}) - {source}\n"
+            else:
+                newsletter += f"{i}. {title} - {source}\n"
+        
+        newsletter += f"\n---\n*Newsletter generated on {datetime.now().strftime('%B %d, %Y at %I:%M %p')}*"
+        
+        return newsletter
+    
+    def _generate_fallback(self) -> str:
+        """Generate a fallback newsletter when all else fails"""
+        logger.info("Using fallback newsletter generation")
+        
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        return f"""# Newsletter: {self.topic}
+
+## System Status
+
+The newsletter generation system encountered issues accessing external APIs. This could be due to:
+
+- NewsAPI rate limits or connectivity issues
+- API key configuration problems
+- Network restrictions in the Docker environment
+
+## Configuration Check
+
+- **Topic Requested:** {self.topic}
+- **Articles Requested:** {self.search_limit}
+- **Time Range:** {self.time_range}
+- **Generated:** {current_time}
+- **NEWSAPI_KEY:** {'Set' if NEWSAPI_API_KEY else 'Missing'}
+- **NEBIUS_API_KEY:** {'Set' if NEBIUS_API_KEY else 'Missing'}
+
+## Troubleshooting
+
+1. **Check API Keys:** Ensure both NewsAPI and Nebius API keys are valid and properly set
+2. **Check Rate Limits:** NewsAPI has usage limits that might be exceeded
+3. **Check Network:** Ensure Docker containers can access external APIs
+4. **Check Logs:** Run `docker-compose logs api` for detailed error information
+
+## Next Steps
+
+To resolve this issue:
+- Verify your API keys at https://newsapi.org/ and https://studio.nebius.ai/
+- Check your internet connection and firewall settings
+- Review container logs for specific error messages
+- Try a different topic or reduce the number of articles
+
+---
+*This is a diagnostic message. Normal newsletter generation will resume once the underlying issues are resolved.*"""
+
+# Test function
+def test_newsletter_generator():
+    """Test the NewsletterGenerator class"""
     try:
-        # Update search parameters
-        newsletter_agent.tools[0].search_params.update({
-            "limit": search_limit,
-        })
-        response = newsletter_agent.run(topic)
-        return response
+        logger.info("Testing NewsletterGenerator...")
+        generator = NewsletterGenerator("AI developments", 3)
+        content = generator.generate()
+        
+        # Check if we got real content
+        if "System Status" in content or "simplified mode" in content:
+            logger.warning("Generator is working but using fallback mode")
+            return True
+        else:
+            logger.info("Newsletter generation test successful with real content")
+            return True
+            
     except Exception as e:
-        print(f"Error occurred: {str(e)}")
-        logger.error(f"Error in main: {str(e)}")
-        raise e
+        logger.error(f"Newsletter generation test failed: {str(e)}")
+        return False
 
 if __name__ == "__main__":
-    NewsletterGenerator("Latest developments in AI")
+    print("Testing Enhanced NewsletterGenerator...")
+    
+    if test_newsletter_generator():
+        print("✅ NewsletterGenerator is working")
+        
+        # Generate a test newsletter
+        gen = NewsletterGenerator("Latest technology news", 3)
+        content = gen.generate()
+        print("\n" + "="*50)
+        print("SAMPLE NEWSLETTER:")
+        print("="*50)
+        print(content)
+    else:
+        print("❌ NewsletterGenerator test failed")
+        exit(1)

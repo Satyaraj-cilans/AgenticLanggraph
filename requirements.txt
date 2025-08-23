@@ -1,8 +1,18 @@
-asyncio
+# Core dependencies
+fastapi
+uvicorn
 streamlit
+python-dotenv
+requests
+pydantic
+
+# AI and News API dependencies
 agno
 newsapi-python
-python-dotenv
-nest-asyncio
-openai
-sqlalchemy
+
+
+asyncio-throttle
+
+# Additional utilities
+python-multipart
+aiofiles    

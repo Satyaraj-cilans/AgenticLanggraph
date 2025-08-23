@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  # FastAPI Backend
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: newsletter-api
+    ports:
+      - "8000:8000"
+    environment:
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - NEWSAPI_API_KEY=${NEWSAPI_API_KEY}
+    volumes:
+      - ./tmp:/app/tmp  # Persist SQLite database
+      - ./.env:/app/.env  # Mount environment file
+    networks:
+      - newsletter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Streamlit Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: newsletter-frontend
+    ports:
+      - "8501:8501"
+    environment:
+      - NEBIUS_API_KEY=${NEBIUS_API_KEY}
+      - NEWSAPI_API_KEY=${NEWSAPI_API_KEY}
+    volumes:
+      - ./.env:/app/.env  # Mount environment file
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - newsletter-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  newsletter-network:
+    driver: bridge
+
+volumes:
+  tmp_data:
+    driver: local
