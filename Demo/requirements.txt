@@ -1,0 +1,13 @@
+streamlit
+python-dotenv
+agno
+asyncio
+# Core dependencies
+
+requests
+beautifulsoup4
+
+nest-asyncio
+lxml
+html5lib
+python-dateutil
